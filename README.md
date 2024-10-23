@@ -1,4 +1,4 @@
-# mountmaster
+# Mount Master
 
 An ashita v4 addon that allows mount and dismount from one command. Set a favorite mount or let it choose randomly.
 
