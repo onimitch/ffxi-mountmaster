@@ -6,6 +6,7 @@ addon.link = 'https://github.com/onimitch/'
 
 -- Ashita libs
 require('common')
+local ffi = require('ffi')
 local settings = require('settings')
 local chat = require('chat')
 
@@ -15,11 +16,12 @@ local encoding = require('encoding')
 local mountmaster = {
     default_settings = T{
         selected_mount = 0, -- Random
+        mount_music = 0, -- Set to 0 to disable mount music
     },
     settings = T{},
     held_mounts = T{},
     lang_id = 1, -- 1 = en, 2 = ja
-    mount_status_id = 252
+    mount_status_id = 252,
 }
 
 local MOUNT_NAMES = T{
@@ -157,6 +159,36 @@ ashita.events.register('packet_in', 'packet_in_cb', function(e)
         -- Reload available mounts
         mountmaster.held_mounts = mountmaster.get_available_mounts()
     end
+
+    -- Zone in
+    if e.id == 0x0A then
+        local song_id = mountmaster.settings.mount_music ~= nil and mountmaster.settings.mount_music or 0
+        ashita.bits.pack_be(e.data_modified_raw, 0, 0x5E, song_id, 16)
+    end
+
+    -- Music update
+    if e.id == 0x5F then
+        local slot = struct.unpack('H', e.data, 0x04 + 1)
+        -- | Slot | Purpose |
+        -- | --- | --- |
+        -- | `0` | _Zone (Day)_ |
+        -- | `1` | _Zone (Night)_ |
+        -- | `2` | _Combat (Solo)_ |
+        -- | `3` | _Combat (Party)_ |
+        -- | `4` | _Mount_ |
+        -- | `5` | _Dead_ |
+        -- | `6` | _Mog House_ |
+        -- | `7` | _Fishing_ |
+        if slot == 4 then
+            if mountmaster.settings.mount_music == 0 or mountmaster.settings.mount_music == nil then
+                e.blocked = true
+            else
+                -- local song = struct.unpack('H', e.data, 0x06 + 1)
+                local ptr = ffi.cast('uint8_t*', e.data_modified_raw);
+                ptr[0x06] = mountmaster.settings.mount_music
+            end
+        end
+    end
 end)
 
 ashita.events.register('command', 'mountmaster_command', function(e)
@@ -201,6 +233,15 @@ ashita.events.register('command', 'mountmaster_command', function(e)
             local mount_name = args:slice(3, #args - 2):join(' ')
             mountmaster.set_favorite_mount(encoding:ShiftJIS_To_UTF8(mount_name))
         end
+        return
+    end
+
+    -- Handle: /mount bgm <song_id>
+    if #args == 3 and args[2] == 'bgm' then
+        e.blocked = true
+
+        mountmaster.settings.mount_music = tonumber(args[3])
+        settings.save()
         return
     end
 
