@@ -16,12 +16,14 @@ local encoding = require('encoding')
 local mountmaster = {
     default_settings = T{
         selected_mount = 0, -- Random
-        mount_music = 0, -- Set to 0 to disable mount music
+        mount_music = nil, -- 0 = disable mount music, nil = default mount music
     },
     settings = T{},
-    held_mounts = T{},
+    held_mounts = nil,
+    refresh_mount_list = false,
     lang_id = 1, -- 1 = en, 2 = ja
     mount_status_id = 252,
+    default_mount_song_ids = T{ 84, 212 },
 }
 
 local MOUNT_NAMES = T{
@@ -64,8 +66,7 @@ local MOUNT_NAMES = T{
 }
 
 mountmaster.initialize = function()
-    math.randomseed(os.time())
-    mountmaster.held_mounts = mountmaster.get_available_mounts()
+    -- empty
 end
 
 mountmaster.set_favorite_mount = function(mount_name)
@@ -99,10 +100,27 @@ mountmaster.get_available_mounts = function()
         end
     end
 
+    -- Never return an empty list
+    if #mount_list == 0 then
+        return nil
+    end
+
     return mount_list
 end
 
 mountmaster.get_random_mount = function()
+    if mountmaster.held_mounts == nil or mountmaster.refresh_mount_list then
+        local new_mount_list = mountmaster.get_available_mounts()
+        if new_mount_list ~= nil then
+            mountmaster.held_mounts = new_mount_list
+            mountmaster.refresh_mount_list = false
+        end
+    end
+
+    if mountmaster.held_mounts == nil or #mountmaster.held_mounts == 0 then
+        return nil
+    end
+
     local rand = math.random(#mountmaster.held_mounts)
     return mountmaster.held_mounts[rand]
 end
@@ -110,6 +128,14 @@ end
 mountmaster.mount_up = function(mount_id)
     if mount_id == nil or mount_id == 0 then
         mount_id = mountmaster.get_random_mount()
+    end
+
+    if mount_id == nil then
+        return
+    end
+
+    if not MOUNT_NAMES:haskey(mount_id) then
+        print(chat.header(addon.name):append(chat.error('Mount id not recognised: ' .. mount_id)))
     end
 
     local mount_name = MOUNT_NAMES[mount_id][mountmaster.lang_id]
@@ -155,21 +181,28 @@ ashita.events.register('load', 'mountmaster_load', function()
 end)
 
 ashita.events.register('packet_in', 'packet_in_cb', function(e)
-    -- Key items changed
-    if e.id == 0x055 then
-        -- Reload available mounts
-        mountmaster.held_mounts = mountmaster.get_available_mounts()
-    end
-
     -- Zone in
     if e.id == 0x0A then
-        local song_id = mountmaster.settings.mount_music ~= nil and mountmaster.settings.mount_music or 0
-        ashita.bits.pack_be(e.data_modified_raw, 0, 0x5E, song_id, 16)
+        mountmaster.refresh_mount_list = true
+        math.randomseed(os.time())
+
+        if mountmaster.settings.mount_music ~= nil then
+            -- local mount_song_num = ashita.bits.unpack_be(e.data_modified_raw, 0, 0x5E, 16)
+            -- print('0x0A mount_song_num: ' .. mount_song_num)
+
+            -- TODO: Find a way to get the MusicNum from the songid, assuming it is possible.
+            -- Since we can't do that for now, we just zero it.
+            -- This blocks the normal mount music from playing on first zone.
+            -- Our override then kicks in a few seconds after zoning, presumably when the 0x5F packet comes in.
+            local song_id = 0 -- mountmaster.settings.mount_music
+            ashita.bits.pack_be(e.data_modified_raw, 0, 0x5E, song_id, 16)
+        end
     end
 
     -- Music update
-    if e.id == 0x5F then
+    if e.id == 0x5F and mountmaster.settings.mount_music ~= nil then
         local slot = struct.unpack('H', e.data, 0x04 + 1)
+        local song_id = struct.unpack('H', e.data, 0x06 + 1)
         -- | Slot | Purpose |
         -- | --- | --- |
         -- | `0` | _Zone (Day)_ |
@@ -180,11 +213,10 @@ ashita.events.register('packet_in', 'packet_in_cb', function(e)
         -- | `5` | _Dead_ |
         -- | `6` | _Mog House_ |
         -- | `7` | _Fishing_ |
-        if slot == 4 then
-            if mountmaster.settings.mount_music == 0 or mountmaster.settings.mount_music == nil then
+        if slot == 4 or mountmaster.default_mount_song_ids:contains(song_id) then
+            if mountmaster.settings.mount_music == 0 then
                 e.blocked = true
             else
-                -- local song = struct.unpack('H', e.data, 0x06 + 1)
                 local ptr = ffi.cast('uint8_t*', e.data_modified_raw);
                 ptr[0x06] = mountmaster.settings.mount_music
             end
@@ -238,10 +270,21 @@ ashita.events.register('command', 'mountmaster_command', function(e)
     end
 
     -- Handle: /mount bgm <song_id>
-    if #args == 3 and args[2] == 'bgm' then
+    if #args >= 2 and args[2] == 'bgm' then
         e.blocked = true
 
-        mountmaster.settings.mount_music = tonumber(args[3])
+        if #args == 3 then
+            if args[3] == 'mute' then
+                mountmaster.settings.mount_music = 0
+                print(chat.header(addon.name):append(chat.success('Mount BGM muted')))
+            else
+                mountmaster.settings.mount_music = tonumber(args[3])
+                print(chat.header(addon.name):append(chat.success('Mount BGM set to song id: ' .. mountmaster.settings.mount_music)))
+            end
+        else
+            mountmaster.settings.mount_music = nil
+            print(chat.header(addon.name):append(chat.success('Mount BGM set to default')))
+        end
         settings.save()
         return
     end
