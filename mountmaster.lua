@@ -1,7 +1,7 @@
 addon.name = 'mountmaster'
 addon.author = 'onimitch'
 addon.desc = 'Manage mount and dismount from one command. Set a favorite mount or let it choose randomly.'
-addon.version = '1.0'
+addon.version = '1.1'
 addon.link = 'https://github.com/onimitch/'
 
 -- Ashita libs
