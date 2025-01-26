@@ -64,6 +64,7 @@ local MOUNT_NAMES = T{
 }
 
 mountmaster.initialize = function()
+    math.randomseed(os.time())
     mountmaster.held_mounts = mountmaster.get_available_mounts()
 end
 
